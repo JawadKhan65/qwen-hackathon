@@ -21,7 +21,7 @@ export const defaultAgentPrompts: Record<AgentNodeType, string> = {
   seoStrategist:
     "Produce SEO-friendly product launch copy with title, meta description, and keyword cluster.",
   scriptwriter:
-    "Write a concise short-form video script with visual beats and a memorable closing line.",
+    "Write a word-for-word voiceover script for the creator to record. Adapts energy and pace to the Video Director's motion style — fast-cut gets staccato punchy lines, cinematic gets smooth narration.",
 };
 
 export function getDefaultPrompt(nodeType: AgentNodeType): string {

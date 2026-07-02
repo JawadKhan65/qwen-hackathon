@@ -6,6 +6,12 @@ const WorkflowBuilder = dynamic(() => import("@/components/WorkflowBuilder"), {
   ssr: false,
 });
 
-export default function WorkflowBuilderClient() {
-  return <WorkflowBuilder />;
+export default function WorkflowBuilderClient({
+  workflowId,
+  session,
+}: {
+  workflowId: string;
+  session: any;
+}) {
+  return <WorkflowBuilder workflowId={workflowId} session={session} />;
 }

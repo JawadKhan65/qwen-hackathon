@@ -1,7 +1,7 @@
 "use client";
 
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
-import type { AgentNodeData } from "@/components/WorkflowBuilder";
+import type { AgentNodeData } from "@/lib/types";
 import NodeOutputPanel from "@/components/nodes/NodeOutputPanel";
 import NodeStatus from "@/components/nodes/NodeStatus";
 import { Search, X } from "lucide-react";
@@ -44,6 +44,7 @@ export default function SeoStrategistNode({
         <NodeOutputPanel
           label="SEO Copy"
           result={data.result}
+          streamingText={data.streamingText}
           fallback={
             <>
               <p className="text-slate-400">

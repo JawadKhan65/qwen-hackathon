@@ -41,6 +41,61 @@ export async function generateText(
   }
 }
 
+/**
+ * Streams tokens from the LLM directly into `onChunk` as they arrive.
+ * Chunks are buffered and flushed at sentence breaks or ~70 chars so the
+ * society log stays readable instead of filling with single characters.
+ * Returns the full completed text when done.
+ * ⚠️ This IS the agent call — zero extra API requests.
+ */
+export async function generateStreamingText(
+  systemPrompt: string,
+  userPrompt: string,
+  onChunk: (chunk: string) => void,
+): Promise<string> {
+  if (!dashscopeApiKey) {
+    const text = buildFallbackText(systemPrompt, userPrompt);
+    onChunk(text);
+    return text;
+  }
+
+  try {
+    const stream = await qwenClient.chat.completions.create({
+      model: qwenTextModel,
+      stream: true,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+    });
+
+    let full = "";
+    let buffer = "";
+
+    for await (const chunk of stream) {
+      const token = chunk.choices[0]?.delta?.content ?? "";
+      if (!token) continue;
+      full += token;
+      buffer += token;
+      // Flush on sentence break or once buffer is long enough
+      if (/[.\n!?]/.test(token) || buffer.length >= 70) {
+        const trimmed = buffer.trim();
+        if (trimmed) onChunk(trimmed);
+        buffer = "";
+      }
+    }
+
+    const remaining = buffer.trim();
+    if (remaining) onChunk(remaining);
+
+    return full;
+  } catch {
+    const text = buildFallbackText(systemPrompt, userPrompt);
+    onChunk(text);
+    return text;
+  }
+}
+
 export async function generateMultimodalText(
   systemPrompt: string,
   userPrompt: string,

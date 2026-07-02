@@ -1,7 +1,7 @@
 "use client";
 
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
-import type { AgentNodeData } from "@/components/WorkflowBuilder";
+import type { AgentNodeData } from "@/lib/types";
 import NodeOutputPanel from "@/components/nodes/NodeOutputPanel";
 import NodeStatus from "@/components/nodes/NodeStatus";
 import { Clapperboard, X } from "lucide-react";
@@ -42,12 +42,16 @@ export default function ScriptwriterNode({
       </div>
       <div className="space-y-2 p-4 text-xs leading-5 text-slate-600">
         <NodeOutputPanel
-          label="Script"
+          label="Voiceover Script"
           result={data.result}
+          streamingText={data.streamingText}
           fallback={
             <>
-              <p className="text-slate-400">
-                The script will be generated after the connected nodes run.
+              <p className="font-medium text-slate-500">🎙️ Voiceover Script</p>
+              <p className="text-slate-400 mt-1">
+                Wire this node after the Video Director. It reads the video&apos;s
+                motion style and writes a word-for-word spoken script that adapts
+                its energy to the pacing of the generated video.
               </p>
             </>
           }

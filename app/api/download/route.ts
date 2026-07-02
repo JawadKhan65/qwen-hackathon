@@ -51,7 +51,7 @@ export async function GET(request: Request) {
     upstream.headers.get("content-type") ?? "application/octet-stream";
   const filename = sanitizeFilename(
     requestUrl.searchParams.get("filename"),
-    sourceUrl.pathname.split("/").pop() || "launchshowrunner-asset",
+    sourceUrl.pathname.split("/").pop() || "launchgrid-asset",
   );
 
   return new Response(upstream.body, {

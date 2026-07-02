@@ -1,15 +1,19 @@
 "use client";
 
-import { Brain, CheckCircle2, GitMerge, MessageSquareQuote, Radio, Sparkles, TriangleAlert } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { Brain, CheckCircle2, GitMerge, MessageSquareQuote, Radio, Sparkles, Terminal, TriangleAlert, ChevronUp, ChevronDown } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 export const defaultLogEntries = ["> [System] Pipeline initialized."];
 
 type SocietyLogProps = {
   entries?: string[];
+  height?: number;
+  onHeightChange?: (height: number) => void;
+  isOpen?: boolean;
+  onToggleOpen?: () => void;
 };
 
-type EntryKind = "thinking" | "suggestion" | "consensus" | "complete" | "error" | "system";
+type EntryKind = "thinking" | "suggestion" | "consensus" | "complete" | "error" | "system" | "streaming";
 
 function entryKind(message: string): EntryKind {
   const lower = message.toLowerCase();
@@ -32,75 +36,13 @@ function entryKind(message: string): EntryKind {
     return "suggestion";
   }
   if (lower.includes("completed") || lower.includes("handed off")) return "complete";
-  if (
-    lower.includes("thinking") ||
-    lower.includes("started") ||
-    lower.includes("auditing") ||
-    lower.includes("checking") ||
-    lower.includes("comparing") ||
-    lower.includes("challenging") ||
-    lower.includes("reviewing") ||
-    lower.includes("testing") ||
-    lower.includes("translating") ||
-    lower.includes("extracting") ||
-    lower.includes("mapping") ||
-    lower.includes("reconciling")
-  ) {
-    return "thinking";
-  }
+  if (lower.includes("thinking") || lower.includes("inspecting") || lower.includes("analyzing")) return "thinking";
 
   return "system";
 }
 
-function kindStyles(kind: EntryKind): { tone: string; label: string; Icon: typeof Brain } {
-  if (kind === "error") {
-    return {
-      Icon: TriangleAlert,
-      label: "needs attention",
-      tone: "border-red-400/25 bg-red-400/[0.08] text-red-100",
-    };
-  }
-
-  if (kind === "consensus") {
-    return {
-      Icon: GitMerge,
-      label: "consensus",
-      tone: "border-fuchsia-300/25 bg-fuchsia-300/[0.08] text-fuchsia-100",
-    };
-  }
-
-  if (kind === "suggestion") {
-    return {
-      Icon: MessageSquareQuote,
-      label: "suggestion",
-      tone: "border-amber-300/25 bg-amber-300/[0.08] text-amber-100",
-    };
-  }
-
-  if (kind === "complete") {
-    return {
-      Icon: CheckCircle2,
-      label: "complete",
-      tone: "border-emerald-300/25 bg-emerald-300/[0.08] text-emerald-100",
-    };
-  }
-
-  if (kind === "thinking") {
-    return {
-      Icon: Brain,
-      label: "thinking",
-      tone: "border-sky-300/25 bg-sky-300/[0.08] text-sky-100",
-    };
-  }
-
-  return {
-    Icon: Sparkles,
-    label: "system",
-    tone: "border-slate-400/20 bg-white/[0.04] text-slate-200",
-  };
-}
-
 function parseEntry(entry: string): { role: string; message: string; kind: EntryKind } {
+  // Matches e.g. "> [System] Message"
   const match = entry.match(/^>\s+\[([^\]]+)]\s*(.*)$/);
   const role = match?.[1] ?? "Society";
   const message = match?.[2] ?? entry;
@@ -108,88 +50,124 @@ function parseEntry(entry: string): { role: string; message: string; kind: Entry
   return { role, message, kind: entryKind(message) };
 }
 
-export default function SocietyLog({ entries = defaultLogEntries }: SocietyLogProps) {
+export default function SocietyLog({ 
+  entries = defaultLogEntries,
+  height = 220,
+  onHeightChange,
+  isOpen = true,
+  onToggleOpen
+}: SocietyLogProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const activeCount = entries.filter((entry) => entryKind(entry) === "thinking").length;
+  const isDraggingRef = useRef(false);
 
   useEffect(() => {
     const element = scrollRef.current;
     if (!element) return;
-
     element.scrollTop = element.scrollHeight;
   }, [entries]);
 
-  return (
-    <section className="flex h-[280px] shrink-0 flex-col border-t border-slate-800 bg-[#07111f] text-slate-100">
-      <div className="flex h-12 items-center justify-between border-b border-white/10 px-5">
-        <div>
-          <h2 className="font-mono text-xs font-semibold uppercase tracking-[0.18em] text-emerald-200">
-            Society Thinking Stream
-          </h2>
-          <p className="mt-0.5 text-[11px] text-slate-400">
-            Live peer suggestions, critiques, handoffs, and consensus.
-          </p>
-        </div>
-        <span className="inline-flex items-center gap-2 rounded-full border border-emerald-300/20 bg-emerald-300/10 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-emerald-200">
-          <Radio className="h-3 w-3 animate-pulse" aria-hidden="true" />
-          Live
-        </span>
-      </div>
-      <div
-        ref={scrollRef}
-        className="min-h-0 flex-1 space-y-2 overflow-y-auto px-5 py-4 text-xs leading-relaxed"
-      >
-        {entries.map((entry, index) => {
-          const parsed = parseEntry(entry);
-          const styles = kindStyles(parsed.kind);
-          const Icon = styles.Icon;
-          const isActive = index === entries.length - 1 && parsed.kind === "thinking";
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    isDraggingRef.current = true;
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+  };
 
-          return (
-            <div
-              key={`${index}-${entry}`}
-              className={`group relative overflow-hidden rounded-lg border px-3 py-2 shadow-sm transition ${styles.tone} ${isActive ? "ring-1 ring-current/25" : ""}`}
-            >
-              {isActive ? (
-                <div className="absolute inset-x-0 top-0 h-px animate-pulse bg-current/50" />
-              ) : null}
-              <div className="mb-1 flex items-center gap-2">
-                <span
-                  className={`flex h-6 w-6 items-center justify-center rounded-md bg-current/10 ${isActive ? "animate-pulse" : ""}`}
-                >
-                  <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-                </span>
-                <span
-                  className="max-w-[45%] truncate font-mono text-[10px] font-semibold uppercase tracking-[0.16em] opacity-80"
-                  title={parsed.role}
-                >
-                  {parsed.role}
-                </span>
-                <span
-                  className="ml-auto rounded-full border border-current/20 px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.14em] opacity-80"
-                >
-                  {styles.label}
-                </span>
-              </div>
-              <p className="font-medium text-current/95">
-                {parsed.message}
-                {isActive ? (
-                  <span className="ml-1 inline-flex w-5 justify-between align-baseline">
-                    <span className="h-1 w-1 animate-pulse rounded-full bg-current" />
-                    <span className="h-1 w-1 animate-pulse rounded-full bg-current [animation-delay:120ms]" />
-                    <span className="h-1 w-1 animate-pulse rounded-full bg-current [animation-delay:240ms]" />
-                  </span>
-                ) : null}
-              </p>
-            </div>
-          );
-        })}
-        {activeCount > 0 ? (
-          <div className="px-1 pt-1 font-mono text-[10px] uppercase tracking-[0.16em] text-slate-500">
-            {activeCount} live reasoning update{activeCount === 1 ? "" : "s"} streamed this run
-          </div>
-        ) : null}
+  const handleMouseMove = (e: MouseEvent) => {
+    if (!isDraggingRef.current || !onHeightChange) return;
+    // Calculate new height from bottom of window
+    const newHeight = window.innerHeight - e.clientY;
+    if (newHeight >= 60 && newHeight <= 600) {
+      onHeightChange(newHeight);
+    }
+  };
+
+  const handleMouseUp = () => {
+    isDraggingRef.current = false;
+    document.removeEventListener("mousemove", handleMouseMove);
+    document.removeEventListener("mouseup", handleMouseUp);
+  };
+
+  const getCLIColor = (role: string) => {
+    const r = role.toLowerCase();
+    if (r === "system") return "text-slate-400";
+    if (r === "visual analyst") return "text-cyan-400";
+    if (r === "gtm strategist") return "text-amber-400";
+    if (r === "creative director") return "text-pink-400";
+    if (r === "art director") return "text-indigo-400";
+    if (r === "video director") return "text-rose-400";
+    if (r === "growth strategist") return "text-emerald-400";
+    if (r === "chair") return "text-purple-400";
+    return "text-sky-300";
+  };
+
+  return (
+    <section 
+      style={{ height: isOpen ? `${height}px` : "36px" }}
+      className="flex shrink-0 flex-col border-t border-slate-200 bg-slate-900 text-slate-100 font-mono transition-[height] duration-150 ease-out select-none relative"
+    >
+      {/* Resizing Handle - top border draggable divider */}
+      {isOpen && (
+        <div 
+          onMouseDown={handleMouseDown}
+          className="absolute top-0 left-0 right-0 h-1.5 cursor-ns-resize bg-slate-700/30 hover:bg-slate-500/50 transition-colors z-20"
+          title="Drag to resize panel"
+        />
+      )}
+
+      {/* Header bar */}
+      <div 
+        onClick={onToggleOpen}
+        className="flex h-9 items-center justify-between border-b border-slate-800 bg-slate-950 px-4 cursor-pointer select-none text-[10px] uppercase tracking-wider text-slate-400"
+      >
+        <div className="flex items-center gap-1.5">
+          <Terminal className="h-3.5 w-3.5 text-slate-500" />
+          <span>Autonomous Society Thinking stream</span>
+        </div>
+        <div className="flex items-center gap-2">
+          {isOpen ? (
+            <span className="flex items-center gap-1">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+              <span>Live stream</span>
+            </span>
+          ) : (
+            <span>Paused</span>
+          )}
+          <button 
+            type="button" 
+            className="p-1 hover:bg-slate-800 rounded transition"
+            aria-label={isOpen ? "Collapse panel" : "Expand panel"}
+          >
+            {isOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}
+          </button>
+        </div>
       </div>
+
+      {/* CLI output console log */}
+      {isOpen && (
+        <div
+          ref={scrollRef}
+          className="min-h-0 flex-1 overflow-y-auto px-5 py-3 text-[11px] leading-relaxed font-mono bg-slate-950 text-slate-300 select-text"
+        >
+          {entries.map((entry, index) => {
+            const parsed = parseEntry(entry);
+            const roleColor = getCLIColor(parsed.role);
+            const isError = parsed.kind === "error";
+
+            return (
+              <div 
+                key={`${index}-${entry}`} 
+                className={`py-0.5 border-b border-slate-900/40 hover:bg-slate-900/30 font-mono flex items-start gap-1 ${isError ? "text-red-400 bg-red-950/10" : ""}`}
+              >
+                <span className="text-slate-600 select-none">[{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}]</span>
+                <span className={`${roleColor} font-bold`}>{parsed.role}</span>
+                <span className="text-slate-500 select-none">→</span>
+                <span className="flex-1 whitespace-pre-wrap">{parsed.message}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 }

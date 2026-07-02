@@ -1,4 +1,4 @@
-import type { AgentNodeData } from "@/components/WorkflowBuilder";
+import type { AgentNodeData } from "@/lib/types";
 
 type NodeStatusProps = {
   status?: AgentNodeData["status"];

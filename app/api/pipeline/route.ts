@@ -41,6 +41,139 @@ function sendLog(
   sendEvent(controller, encoder, { log: message });
 }
 
+// ─── INPUT GUARDRAILS ────────────────────────────────────────────────────────
+
+type GuardrailViolation = { nodeId: string; message: string };
+
+function validateInputs(nodes: PipelineNode[], edges: PipelineEdge[]): GuardrailViolation[] {
+  const violations: GuardrailViolation[] = [];
+
+  for (const node of nodes) {
+    if (node.type === "productImage") {
+      const imageUrl = node.data?.imageUrl ?? node.data?.url;
+      const hasDownstream = edges.some((e) => e.source === node.id);
+      if (!imageUrl && hasDownstream) {
+        violations.push({
+          nodeId: node.id,
+          message:
+            "Product Image node is empty. Please upload a product image or paste an image URL before running the pipeline.",
+        });
+      }
+    }
+
+    if (node.type === "rawNotes") {
+      const raw = node.data?.text ?? node.data?.notes;
+      const text = typeof raw === "string" ? raw : undefined;
+      const hasDownstream = edges.some((e) => e.source === node.id);
+      if (!text?.trim() && hasDownstream) {
+        violations.push({
+          nodeId: node.id,
+          message:
+            "Raw Notes node is empty. Please add your product brief, audience details, or launch context before running.",
+        });
+      }
+    }
+  }
+
+  return violations;
+}
+
+// ─── ZERO-COST HANDOFF MESSAGES ──────────────────────────────────────────────
+// No extra API calls. Derived instantly from actual result data.
+
+function buildHandoffMessage(
+  fromNode: PipelineNode,
+  toNode: PipelineNode,
+  result: unknown,
+): string {
+  const from = fromNode.type ?? "agent";
+  const to = toNode.type ?? "agent";
+  const fromLabel = from.replace(/([A-Z])/g, " $1").trim();
+  const toLabel = to.replace(/([A-Z])/g, " $1").trim();
+
+  // Typed handoff messages based on known agent pairings
+  if (from === "productImage" && to === "artDirector")
+    return `> [Product Image → Art Director] Product image ready. Use it as the visual anchor — build a lifestyle scene around it, do not replace or obscure the product.`;
+
+  if (from === "productImage" && to === "seoStrategist")
+    return `> [Product Image → SEO Strategist] Visual product data available. Extract category, attributes, and use-case signals for your keyword strategy.`;
+
+  if (from === "rawNotes" && to === "artDirector")
+    return `> [Raw Notes → Art Director] Launch brief received. Honour the positioning, audience, and constraints when choosing the lifestyle setting.`;
+
+  if (from === "rawNotes" && to === "seoStrategist")
+    return `> [Raw Notes → SEO Strategist] Brand context and positioning received. Align keyword intent with the stated audience and offer angle.`;
+
+  if (from === "artDirector" && to === "videoDirector") {
+    const hasImage = result && typeof result === "object" && "imageUrl" in (result as object);
+    return `> [Art Director → Video Director] ${hasImage ? "Lifestyle image generated." : "Creative direction locked."} Animate this scene — preserve the product hero, apply the consensus motion style, keep it under 5 seconds.`;
+  }
+
+  if (from === "artDirector" && to === "copywriter")
+    return `> [Art Director → Copywriter] Visual territory locked. Match your copy tone to the image mood — if it's premium and minimal, keep the language sharp and restrained.`;
+
+  if (from === "videoDirector" && to === "scriptwriter") {
+    return `> [Video Director → Scriptwriter] Silent video generated. Fast-cut pacing, high energy. Write a punchy staccato voiceover — 10-15 words max, each line hits on a cut. DO NOT describe the visuals, write what the creator SAYS.`;
+  }
+
+  if (from === "copywriter" && to === "scriptwriter")
+    return `> [Copywriter → Scriptwriter] Ad copy locked. Use the hook and CTA angle but compress into spoken word — shorter, more urgent, built for audio not text.`;
+
+  // Generic fallback — still free, still instant
+  const resultType =
+    result && typeof result === "object" && "videoUrl" in (result as object)
+      ? "video"
+      : result && typeof result === "object" && "imageUrl" in (result as object)
+        ? "image"
+        : typeof result === "string"
+          ? "text output"
+          : "structured output";
+
+  return `> [${fromLabel} → ${toLabel}] ${fromLabel} completed with ${resultType}. Passing context downstream for your role.`;
+}
+
+// ─── STATIC LIVE THOUGHTS (shown while the LLM generates its response) ───────
+
+function nodeThoughts(node: PipelineNode): string[] {
+  const type = node.type ?? "agent";
+
+  const thoughts: Record<string, string[]> = {
+    artDirector: [
+      `> [Art Director] Scanning image for hero product visibility and composition anchors.`,
+      `> [Art Director] Testing lifestyle territory against product truth — rejecting generic backgrounds.`,
+      `> [Art Director] Locking final image style from society consensus brief.`,
+    ],
+    videoDirector: [
+      `> [Video Director] Analysing lifestyle image for motion anchors and camera path potential.`,
+      `> [Video Director] Deciding pacing: fast-cut vs. slow cinematic based on product energy.`,
+      `> [Video Director] Encoding motion style metadata for Scriptwriter handoff.`,
+    ],
+    copywriter: [
+      `> [Copywriter] Translating society GTM angle into a buyer-facing hook.`,
+      `> [Copywriter] A/B testing direct-response vs. brand-polish tone.`,
+      `> [Copywriter] Cutting generic language, tightening CTA to 5 words or fewer.`,
+    ],
+    seoStrategist: [
+      `> [SEO Strategist] Extracting product category signals and searchable attributes.`,
+      `> [SEO Strategist] Mapping keyword intent to product page readability.`,
+      `> [SEO Strategist] Aligning meta copy with the consensus positioning strategy.`,
+    ],
+    scriptwriter: [
+      `> [Scriptwriter] Reading Video Director's motion style handoff — pacing: fast-cut.`,
+      `> [Scriptwriter] Adapting voiceover rhythm to match video energy — short punchy lines.`,
+      `> [Scriptwriter] Writing word-for-word script the creator can record as audio overlay.`,
+    ],
+  };
+
+  const label = type.charAt(0).toUpperCase() + type.slice(1);
+  return thoughts[type] ?? [
+    `> [${label}] Reading context from upstream agents.`,
+    `> [${label}] Preparing structured handoff for downstream nodes.`,
+  ];
+}
+
+// ─── THOUGHT TICKER (interleaves thoughts while LLM runs) ────────────────────
+
 async function withLiveThoughts<T>(
   emit: (message: string) => void,
   thoughts: string[],
@@ -48,12 +181,10 @@ async function withLiveThoughts<T>(
 ): Promise<T> {
   let index = 0;
   const interval = setInterval(() => {
-    if (index >= thoughts.length) {
-      return;
-    }
+    if (index >= thoughts.length) return;
     emit(thoughts[index]);
     index += 1;
-  }, 2600);
+  }, 2800);
 
   try {
     return await task;
@@ -62,65 +193,13 @@ async function withLiveThoughts<T>(
   }
 }
 
-function nodeThoughts(node: PipelineNode): string[] {
-  const type = node.type ?? "agent";
-  const label = node.id;
-
-  if (type === "artDirector") {
-    return [
-      `> [${label}] Comparing candidate lifestyle territories against product truth.`,
-      `> [${label}] Checking composition: hero visibility, props, background, and crop safety.`,
-      `> [${label}] Applying consensus image style from the roundtable.`,
-    ];
-  }
-
-  if (type === "videoDirector") {
-    return [
-      `> [${label}] Reviewing generated image for motion anchors and camera path.`,
-      `> [${label}] Testing whether the consensus style can animate clearly in 5 seconds.`,
-      `> [${label}] Preserving product identity while adding launch motion.`,
-    ];
-  }
-
-  if (type === "copywriter") {
-    return [
-      `> [${label}] Translating society consensus into a buyer-facing hook.`,
-      `> [${label}] Comparing direct-response angle versus brand-polish angle.`,
-      `> [${label}] Tightening CTA and reducing generic language.`,
-    ];
-  }
-
-  if (type === "seoStrategist") {
-    return [
-      `> [${label}] Extracting product category, use case, and searchable attributes.`,
-      `> [${label}] Balancing keyword intent with product-page readability.`,
-      `> [${label}] Aligning SEO copy with the selected GTM positioning.`,
-    ];
-  }
-
-  if (type === "scriptwriter") {
-    return [
-      `> [${label}] Mapping hook, visual beat, and close to the selected video style.`,
-      `> [${label}] Checking that on-screen text matches the ad-copy angle.`,
-      `> [${label}] Compressing the story into a short-form sequence.`,
-    ];
-  }
-
-  return [
-    `> [${label}] Reading user-provided context.`,
-    `> [${label}] Preparing handoff for downstream agents.`,
-  ];
-}
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
 
 function formatResultForContext(result: unknown): string {
   if (typeof result === "string") {
-    if (/^data:image\//.test(result)) {
-      return "[User-uploaded product image data]";
-    }
-
+    if (/^data:image\//.test(result)) return "[User-uploaded product image data]";
     return result.length > 600 ? `${result.slice(0, 600)}...` : result;
   }
-
   if (result && typeof result === "object") {
     const record = result as Record<string, unknown>;
     return JSON.stringify({
@@ -129,7 +208,6 @@ function formatResultForContext(result: unknown): string {
       videoUrl: record.videoUrl ? "[generated video url]" : undefined,
     });
   }
-
   return JSON.stringify(result);
 }
 
@@ -143,10 +221,7 @@ function contextFromResults(results: PipelineResultMap, nodeIds: string[]): stri
 
 function promptFromNode(node: PipelineNode): string {
   const prompt = node.data?.prompt;
-  if (typeof prompt === "string") {
-    return prompt;
-  }
-
+  if (typeof prompt === "string") return prompt;
   return node.type ? getDefaultPrompt(node.type as AgentNodeType) : "";
 }
 
@@ -154,31 +229,48 @@ function inboundNodeIds(nodeId: string, edges: PipelineEdge[]): string[] {
   return edges.filter((edge) => edge.target === nodeId).map((edge) => edge.source);
 }
 
-function outboundCount(nodeId: string, edges: PipelineEdge[]): number {
-  return edges.filter((edge) => edge.source === nodeId).length;
+function outboundNodeIds(nodeId: string, edges: PipelineEdge[]): string[] {
+  return edges.filter((edge) => edge.source === nodeId).map((edge) => edge.target);
 }
 
 function firstMediaUrl(results: PipelineResultMap, nodeIds: string[]): string | undefined {
   for (const nodeId of [...nodeIds].reverse()) {
     const result = results[nodeId];
-
-    if (
-      typeof result === "string" &&
-      (/^https?:\/\//.test(result) || /^data:image\//.test(result))
-    ) {
+    if (typeof result === "string" && (/^https?:\/\//.test(result) || /^data:image\//.test(result))) {
       return result;
     }
-
     if (result && typeof result === "object") {
       const record = result as Record<string, unknown>;
       const url = record.imageUrl ?? record.videoUrl ?? record.url;
-      if (typeof url === "string") {
-        return url;
+      if (typeof url === "string") return url;
+    }
+  }
+  return undefined;
+}
+
+function extractBriefSections(brief: string, sections: string[]): string {
+  if (!brief) return "";
+  const lines = brief.split("\n");
+  const result: string[] = [];
+  let collecting = false;
+
+  for (const line of lines) {
+    const match = line.match(/^###\s+(.*)$/);
+    if (match) {
+      const title = match[1].trim();
+      const matchesAny = sections.some((s) => title.toLowerCase().includes(s.toLowerCase()));
+      if (matchesAny) {
+        collecting = true;
+        result.push(line);
+      } else {
+        collecting = false;
       }
+    } else if (collecting) {
+      result.push(line);
     }
   }
 
-  return undefined;
+  return result.join("\n").trim() || brief;
 }
 
 function buildDependencyState(nodes: PipelineNode[], edges: PipelineEdge[]) {
@@ -187,10 +279,7 @@ function buildDependencyState(nodes: PipelineNode[], edges: PipelineEdge[]) {
   const outbound = new Map<string, string[]>(nodes.map((node) => [node.id, []]));
 
   for (const edge of edges) {
-    if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target)) {
-      continue;
-    }
-
+    if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target)) continue;
     pendingInbound.set(edge.target, (pendingInbound.get(edge.target) ?? 0) + 1);
     outbound.get(edge.source)?.push(edge.target);
   }
@@ -198,17 +287,36 @@ function buildDependencyState(nodes: PipelineNode[], edges: PipelineEdge[]) {
   return { pendingInbound, outbound };
 }
 
+/**
+ * Runs a node. Text agents receive a streaming `onChunk` callback that pipes
+ * LLM tokens directly into the society log — no extra API calls.
+ */
 async function runNode(
   node: PipelineNode,
   results: PipelineResultMap,
   inboundSources: string[],
   societyBrief: string,
+  onChunk: (chunk: string) => void,
 ): Promise<unknown> {
   const context = contextFromResults(results, inboundSources);
   const prompt = promptFromNode(node);
+
+  let relevantBrief = societyBrief;
+  if (node.type === "artDirector") {
+    relevantBrief = extractBriefSections(societyBrief, ["Image Style", "Consensus Strategy"]);
+  } else if (node.type === "videoDirector") {
+    relevantBrief = extractBriefSections(societyBrief, ["Video Style", "Image Style"]);
+  } else if (node.type === "copywriter") {
+    relevantBrief = extractBriefSections(societyBrief, ["Copy Strategy", "Audience & Positioning"]);
+  } else if (node.type === "seoStrategist") {
+    relevantBrief = extractBriefSections(societyBrief, ["SEO Strategy", "Audience & Positioning"]);
+  } else if (node.type === "scriptwriter") {
+    relevantBrief = extractBriefSections(societyBrief, ["Video Style", "Copy Strategy"]);
+  }
+
   const combinedContext = [
-    "Shared society-calibrated launch brief:",
-    societyBrief,
+    "Shared society-calibrated launch brief guidelines:",
+    relevantBrief,
     "Role instruction:",
     prompt,
     "Inbound node context:",
@@ -216,6 +324,7 @@ async function runNode(
   ]
     .filter(Boolean)
     .join("\n\n");
+
   switch (node.type) {
     case "artDirector":
       return runArtDirector({
@@ -225,11 +334,11 @@ async function runNode(
     case "videoDirector":
       return runVideoDirector(firstMediaUrl(results, inboundSources), combinedContext);
     case "copywriter":
-      return runCopywriter(combinedContext || JSON.stringify(node.data ?? {}));
+      return runCopywriter(combinedContext || JSON.stringify(node.data ?? {}), onChunk);
     case "seoStrategist":
-      return runSeoStrategist(combinedContext || JSON.stringify(node.data ?? {}));
+      return runSeoStrategist(combinedContext || JSON.stringify(node.data ?? {}), onChunk);
     case "scriptwriter":
-      return runScriptwriter(combinedContext || JSON.stringify(node.data ?? {}));
+      return runScriptwriter(combinedContext || JSON.stringify(node.data ?? {}), onChunk);
     case "productImage":
       return node.data?.imageUrl ?? node.data?.url ?? null;
     case "rawNotes":
@@ -238,6 +347,8 @@ async function runNode(
       return { skipped: true, reason: `No runner for node type ${node.type ?? "unknown"}` };
   }
 }
+
+// ─── MAIN POST HANDLER ────────────────────────────────────────────────────────
 
 export async function POST(request: Request) {
   const body = (await request.json()) as PipelineRequest;
@@ -254,6 +365,22 @@ export async function POST(request: Request) {
       let totalNodeDurationMs = 0;
 
       try {
+        // ── GUARDRAIL CHECK ──────────────────────────────────────────────
+        const violations = validateInputs(nodes, edges);
+        if (violations.length > 0) {
+          for (const v of violations) {
+            sendLog(controller, encoder, `> ⛔ [Guardrail] ${v.message}`);
+            sendEvent(controller, encoder, { nodeId: v.nodeId, status: "error", error: v.message });
+          }
+          sendEvent(controller, encoder, {
+            status: "error",
+            error: "Pipeline blocked: one or more input nodes are empty. Fill them in and run again.",
+          });
+          controller.close();
+          return;
+        }
+
+        // ── TOPOLOGY ─────────────────────────────────────────────────────
         const orderedNodes = getExecutionOrder(nodes, edges);
         const nodeMap = new Map(nodes.map((node) => [node.id, node]));
         const { pendingInbound, outbound } = buildDependencyState(nodes, edges);
@@ -271,6 +398,7 @@ export async function POST(request: Request) {
         );
         sendLog(controller, encoder, "> [Society] Opening roundtable: agents are inspecting assets, notes, and workflow topology.");
 
+        // ── SOCIETY ROUNDTABLE ───────────────────────────────────────────
         const societyStartedAt = Date.now();
         const societyPlan = await withLiveThoughts(
           (message) => sendLog(controller, encoder, message),
@@ -291,7 +419,8 @@ export async function POST(request: Request) {
         );
         totalNodeDurationMs += Date.now() - societyStartedAt;
         executedAgents += 7;
-        conflictResolutions += societyPlan.brief.includes("conflict") || societyPlan.brief.includes("risk") ? 1 : 0;
+        conflictResolutions +=
+          societyPlan.brief.includes("conflict") || societyPlan.brief.includes("risk") ? 1 : 0;
 
         results.__society = {
           rationale: societyPlan.brief,
@@ -300,6 +429,7 @@ export async function POST(request: Request) {
 
         sendLog(controller, encoder, "> [Society] Consensus brief locked. The graph will now execute with shared GTM strategy.");
 
+        // ── NODE EXECUTION WAVES ─────────────────────────────────────────
         while (readyNodeIds.length > 0 && !stoppedForError) {
           sendLog(
             controller,
@@ -317,11 +447,12 @@ export async function POST(request: Request) {
               const inboundSources = inboundNodeIds(node.id, edges);
               const prompt = promptFromNode(node);
               const promptPreview = prompt.slice(0, 90) || "node instructions";
+              const nodeType = node.type ?? "unknown";
 
               sendLog(
                 controller,
                 encoder,
-                `> [System] Decomposed ${node.type ?? "unknown"} as a role with ${inboundSources.length} inbound ${inboundSources.length === 1 ? "dependency" : "dependencies"}.`,
+                `> [System] Decomposed ${nodeType} as a role with ${inboundSources.length} inbound ${inboundSources.length === 1 ? "dependency" : "dependencies"}.`,
               );
 
               if (inboundSources.length > 1) {
@@ -333,28 +464,36 @@ export async function POST(request: Request) {
                 );
               }
 
-              sendEvent(controller, encoder, {
-                nodeId: node.id,
-                status: "running",
-              });
-
+              sendEvent(controller, encoder, { nodeId: node.id, status: "running" });
               sendLog(
                 controller,
                 encoder,
                 `> [${node.id}] Thinking with society brief: ${promptPreview}${prompt.length > 90 ? "..." : ""}`,
               );
 
+              // Streaming callback: emits tokens as dedicated SSE events → node card
+              // accumulates them ChatGPT-style. Nothing goes to the society log.
+              // ⚠️ Zero extra API calls — this IS the agent's generation, streamed live.
+              const onChunk = (chunk: string) => {
+                sendEvent(controller, encoder, {
+                  nodeId: node.id,
+                  status: "streaming",
+                  chunk,
+                });
+              };
+
               try {
                 const nodeStartedAt = Date.now();
                 const result = await withLiveThoughts(
                   (message) => sendLog(controller, encoder, message),
                   nodeThoughts(node),
-                  runNode(node, results, inboundSources, societyPlan.brief),
+                  runNode(node, results, inboundSources, societyPlan.brief, onChunk),
                 );
                 return {
                   nodeId,
                   ok: true as const,
                   result,
+                  node,
                   durationMs: Date.now() - nodeStartedAt,
                 };
               } catch (error) {
@@ -369,11 +508,7 @@ export async function POST(request: Request) {
           for (const waveResult of waveResults) {
             if (!waveResult.ok) {
               stoppedForError = true;
-              sendLog(
-                controller,
-                encoder,
-                `> [${waveResult.nodeId}] Error: ${waveResult.error}`,
-              );
+              sendLog(controller, encoder, `> [${waveResult.nodeId}] Error: ${waveResult.error}`);
               sendEvent(controller, encoder, {
                 nodeId: waveResult.nodeId,
                 status: "error",
@@ -387,10 +522,12 @@ export async function POST(request: Request) {
             executedAgents += 1;
             totalNodeDurationMs += waveResult.durationMs;
 
+            const downstreamIds = outboundNodeIds(waveResult.nodeId, edges);
+
             sendLog(
               controller,
               encoder,
-              `> [${waveResult.nodeId}] Completed with ${typeof waveResult.result === "string" ? "text/media" : "structured output"}; handed off to ${outboundCount(waveResult.nodeId, edges)} downstream node${outboundCount(waveResult.nodeId, edges) === 1 ? "" : "s"}.`,
+              `> [${waveResult.nodeId}] Completed with ${typeof waveResult.result === "string" ? "text/media" : "structured output"}; handed off to ${downstreamIds.length} downstream node${downstreamIds.length === 1 ? "" : "s"}.`,
             );
             sendEvent(controller, encoder, {
               nodeId: waveResult.nodeId,
@@ -398,6 +535,21 @@ export async function POST(request: Request) {
               result: waveResult.result,
               data: waveResult.result,
             });
+
+            // ── ZERO-COST HANDOFF MESSAGES ──────────────────────────────
+            // Derived instantly from result data. No API call. No cost.
+            if (waveResult.node) {
+              for (const targetId of downstreamIds) {
+                const targetNode = nodeMap.get(targetId);
+                if (targetNode) {
+                  sendLog(
+                    controller,
+                    encoder,
+                    buildHandoffMessage(waveResult.node, targetNode, waveResult.result),
+                  );
+                }
+              }
+            }
 
             for (const targetId of outbound.get(waveResult.nodeId) ?? []) {
               const nextCount = (pendingInbound.get(targetId) ?? 0) - 1;
@@ -440,19 +592,12 @@ export async function POST(request: Request) {
             `> [System] Efficiency summary: ${executedAgents} specialist agents completed in ${elapsedMs}ms vs baseline ${baselineMs}ms. Estimated gain ${efficiencyGain}%.`,
           );
           sendLog(controller, encoder, "> [System] Pipeline completed.");
-          sendEvent(controller, encoder, {
-            status: "complete",
-            results,
-            summary,
-          });
+          sendEvent(controller, encoder, { status: "complete", results, summary });
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown pipeline error";
         sendLog(controller, encoder, `> [System] Pipeline error: ${message}`);
-        sendEvent(controller, encoder, {
-          status: "error",
-          error: message,
-        });
+        sendEvent(controller, encoder, { status: "error", error: message });
       } finally {
         controller.close();
       }

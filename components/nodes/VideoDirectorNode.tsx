@@ -1,7 +1,7 @@
 "use client";
 
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
-import type { AgentNodeData } from "@/components/WorkflowBuilder";
+import type { AgentNodeData } from "@/lib/types";
 import MediaDownloadLink from "@/components/nodes/MediaDownloadLink";
 import NodeStatus from "@/components/nodes/NodeStatus";
 import { getMediaResultUrl } from "@/components/nodes/media-result";
@@ -56,7 +56,7 @@ export default function VideoDirectorNode({
               />
               <div className="absolute bottom-2 right-2">
                 <MediaDownloadLink
-                  filename="launchshowrunner-product-video.mp4"
+                  filename="launchgrid-product-video.mp4"
                   label="Download"
                   tone="dark"
                   url={videoUrl}

@@ -32,7 +32,7 @@ export async function runVideoDirector(
       },
       parameters: {
         audio: false,
-        duration: 5,
+        duration: 10,
         prompt_extend: true,
         resolution: "720P",
         watermark: false,
@@ -50,10 +50,13 @@ export async function runVideoDirector(
   return {
     videoUrl,
     rationale: [
-      "### Motion Direction",
-      "- Animated from the generated lifestyle image to preserve visual continuity.",
-      "- Chose a short, silent, polished launch motion suitable for product pages and paid social.",
-      "- Kept motion restrained so downstream copy/script agents can align messaging to the visual pacing.",
+      "### 🎬 Motion Style Handoff (READ THIS: Scriptwriter must adapt voiceover energy to match)",
+      "- **Pacing:** Fast-cut product montage — 3-5 rapid scene changes in 5 seconds.",
+      "- **Energy level:** HIGH — kinetic, urgent, momentum-driven.",
+      "- **Tone:** Premium but accessible. Launch energy, not luxury slowness.",
+      "- **Key visual moments:** Product hero reveal → lifestyle context → product close-up → brand lock-up.",
+      "- **Audio implication:** Voiceover must be SHORT, punchy, staccato. No long sentences. Each word hits on a cut.",
+      "- **Scriptwriter instruction:** Write 10-15 words MAX. Short bursts. Think: 'Stop. Look. This changes everything.' NOT: 'Introducing our new premium water bottle designed for the modern athlete.'",
     ].join("\n"),
   };
 }

@@ -1,28 +1,44 @@
-"use client";
+"use client"
 
-export default function GlobalError({
-  error,
-  reset,
-}: Readonly<{
-  error: Error & { digest?: string };
-  reset: () => void;
-}>) {
+import Link from "next/link";
+
+export default function GlobalError() {
   return (
     <html lang="en">
-      <body className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-50">
-        <main className="max-w-md rounded-2xl border border-white/10 bg-white/5 p-8 text-center shadow-2xl shadow-black/30">
-          <h1 className="text-2xl font-semibold tracking-tight">LaunchShowrunner hit an error</h1>
-          <p className="mt-3 text-sm text-slate-300">
-            {error.message || "Something unexpected happened while rendering the workspace."}
+      <body style={{
+        margin: 0,
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "#0c0a09",
+        color: "#e7e5e4",
+        fontFamily: "monospace"
+      }}>
+        <div style={{ textAlign: "center", padding: "2rem" }}>
+          <h2 style={{ fontSize: "1.25rem", color: "#f87171", marginBottom: "1rem" }}>
+            [System Error: Exception Unhandled]
+          </h2>
+          <p style={{ fontSize: "0.875rem", color: "#a8a29e", marginBottom: "1.5rem" }}>
+            An unexpected error occurred in the LaunchGrid application runtime.
           </p>
-          <button
-            type="button"
-            onClick={reset}
-            className="mt-6 inline-flex h-10 items-center justify-center rounded-md bg-white px-4 text-sm font-medium text-slate-950 transition hover:bg-slate-200"
+          <Link
+            href="/"
+            style={{
+              display: "inline-block",
+              padding: "0.5rem 1rem",
+              backgroundColor: "#1c1917",
+              color: "#e7e5e4",
+              border: "1px solid #44403c",
+              borderRadius: "0.25rem",
+              textDecoration: "none",
+              fontSize: "0.875rem",
+              fontFamily: "monospace"
+            }}
           >
-            Try again
-          </button>
-        </main>
+            Restart Session
+          </Link>
+        </div>
       </body>
     </html>
   );

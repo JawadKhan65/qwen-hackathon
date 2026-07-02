@@ -1,8 +1,11 @@
-import { generateText } from "@/lib/qwen-client";
+import { generateStreamingText } from "@/lib/qwen-client";
 
 const SYSTEM_PROMPT =
-  "You are the Ad Copywriter in an ecommerce launch agent society. Use the upstream product, visual, and motion context. Return polished markdown with: ### Angle, ### Primary Copy, ### Variations, and ### CTA. Keep it concise and production-ready.";
+  "You are the Copywriter in an ecommerce launch agent society. Use the upstream product, image, and campaign context. Return polished markdown with: ### Hook, ### Primary Ad Copy, ### CTA, and ### Tone Notes.";
 
-export async function runCopywriter(context: string): Promise<string> {
-  return generateText(SYSTEM_PROMPT, context);
+export async function runCopywriter(
+  context: string,
+  onChunk?: (chunk: string) => void,
+): Promise<string> {
+  return generateStreamingText(SYSTEM_PROMPT, context, onChunk ?? (() => {}));
 }

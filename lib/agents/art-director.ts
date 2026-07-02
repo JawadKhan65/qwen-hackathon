@@ -16,9 +16,9 @@ export async function runArtDirector({
   productImageUrl,
 }: ArtDirectorInput = {}): Promise<{ imageUrl: string; rationale: string }> {
   const prompt = [
-    "Create a premium ecommerce lifestyle image grounded in the user's product reference.",
+    "Create a premium ecommerce lifestyle scene using the uploaded product image as the direct subject reference.",
     productImageUrl
-      ? "Use the attached product image as the visual reference. Preserve the product shape, color, packaging, and visible label details without inventing a different product."
+      ? "CRITICAL: The attached image is the EXACT product. Do NOT redesign the container, change its branding, alter the logo, or replace it with a different bottle/box/item. Keep the exact colors, label layout, and shape. Place this exact product realistically into the lifestyle background described below."
       : "No product image was provided; do not invent a specific branded product.",
     context,
   ]
@@ -46,8 +46,9 @@ export async function runArtDirector({
         parameters: {
           n: 1,
           negative_prompt:
-            "low quality, blurry, distorted product, changed logo, unreadable label, extra artifacts",
-          prompt_extend: true,
+            "low quality, blurry, distorted product, changed logo, modified packaging, unreadable label, extra artifacts, different product shape",
+          // Disable prompt expansion to prevent the model from ignoring the reference image
+          prompt_extend: productImageUrl ? false : true,
           size: "1024*1024",
           watermark: false,
         },

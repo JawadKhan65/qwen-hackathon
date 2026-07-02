@@ -1,7 +1,7 @@
 "use client";
 
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
-import type { AgentNodeData } from "@/components/WorkflowBuilder";
+import type { AgentNodeData } from "@/lib/types";
 import NodeStatus from "@/components/nodes/NodeStatus";
 import { Upload, X } from "lucide-react";
 import { useState } from "react";
