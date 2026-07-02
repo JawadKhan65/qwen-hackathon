@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 
-const dashscopeApiKey = process.env.DASHSCOPE_API_KEY ?? process.env.QWEN_API_KEY;
+const dashscopeApiKey = process.env.DASHSCOPE_API_KEY ?? process.env.OPENAI_API_KEY;
 const dashscopeBaseUrl =
   process.env.DASHSCOPE_COMPATIBLE_BASE_URL ??
   process.env.DASHSCOPE_BASE_URL ??
