@@ -1,27 +1,39 @@
 import OpenAI from "openai";
 
-const dashscopeApiKey = process.env.DASHSCOPE_API_KEY ?? process.env.OPENAI_API_KEY;
-const dashscopeBaseUrl =
-  process.env.DASHSCOPE_COMPATIBLE_BASE_URL ??
-  process.env.DASHSCOPE_BASE_URL ??
-  "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
 const qwenTextModel = process.env.QWEN_TEXT_MODEL ?? "qwen3.7-plus";
 
-const qwenClient = new OpenAI({
-  apiKey: dashscopeApiKey,
-  baseURL: dashscopeBaseUrl,
-});
+function getQwenClient() {
+  const apiKey =
+    process.env.DASHSCOPE_API_KEY ?? process.env.QWEN_API_KEY;
+
+  if (!apiKey) {
+    throw new Error("Missing DASHSCOPE_API_KEY");
+  }
+
+  return new OpenAI({
+    apiKey,
+    baseURL:
+      process.env.DASHSCOPE_COMPATIBLE_BASE_URL ??
+      process.env.DASHSCOPE_BASE_URL ??
+      "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+  });
+}
 
 export async function generateText(
   systemPrompt: string,
   userPrompt: string,
 ): Promise<string> {
-  if (!dashscopeApiKey) {
+  const apiKey =
+    process.env.DASHSCOPE_API_KEY ?? process.env.QWEN_API_KEY;
+
+  if (!apiKey) {
     return buildFallbackText(systemPrompt, userPrompt);
   }
 
   try {
-    const completion = await qwenClient.chat.completions.create({
+    const client = getQwenClient();
+
+    const completion = await client.chat.completions.create({
       model: qwenTextModel,
       messages: [
         { role: "system", content: systemPrompt },
@@ -31,36 +43,35 @@ export async function generateText(
 
     const content = completion.choices[0]?.message?.content;
 
-    if (typeof content === "string") {
-      return content;
-    }
-
-    return buildFallbackText(systemPrompt, userPrompt);
+    return typeof content === "string"
+      ? content
+      : buildFallbackText(systemPrompt, userPrompt);
   } catch {
     return buildFallbackText(systemPrompt, userPrompt);
   }
 }
 
 /**
- * Streams tokens from the LLM directly into `onChunk` as they arrive.
- * Chunks are buffered and flushed at sentence breaks or ~70 chars so the
- * society log stays readable instead of filling with single characters.
- * Returns the full completed text when done.
- * ⚠️ This IS the agent call — zero extra API requests.
+ * Streaming generation
  */
 export async function generateStreamingText(
   systemPrompt: string,
   userPrompt: string,
   onChunk: (chunk: string) => void,
 ): Promise<string> {
-  if (!dashscopeApiKey) {
+  const apiKey =
+    process.env.DASHSCOPE_API_KEY ?? process.env.QWEN_API_KEY;
+
+  if (!apiKey) {
     const text = buildFallbackText(systemPrompt, userPrompt);
     onChunk(text);
     return text;
   }
 
   try {
-    const stream = await qwenClient.chat.completions.create({
+    const client = getQwenClient();
+
+    const stream = await client.chat.completions.create({
       model: qwenTextModel,
       stream: true,
       messages: [
@@ -75,9 +86,10 @@ export async function generateStreamingText(
     for await (const chunk of stream) {
       const token = chunk.choices[0]?.delta?.content ?? "";
       if (!token) continue;
+
       full += token;
       buffer += token;
-      // Flush on sentence break or once buffer is long enough
+
       if (/[.\n!?]/.test(token) || buffer.length >= 70) {
         const trimmed = buffer.trim();
         if (trimmed) onChunk(trimmed);
@@ -85,8 +97,9 @@ export async function generateStreamingText(
       }
     }
 
-    const remaining = buffer.trim();
-    if (remaining) onChunk(remaining);
+    if (buffer.trim()) {
+      onChunk(buffer.trim());
+    }
 
     return full;
   } catch {
@@ -96,17 +109,29 @@ export async function generateStreamingText(
   }
 }
 
+/**
+ * Multimodal (image + text)
+ */
 export async function generateMultimodalText(
   systemPrompt: string,
   userPrompt: string,
   imageUrl?: string,
 ): Promise<string> {
-  if (!dashscopeApiKey || !imageUrl) {
+  if (!imageUrl) {
     return generateText(systemPrompt, userPrompt);
   }
 
+  const apiKey =
+    process.env.DASHSCOPE_API_KEY ?? process.env.QWEN_API_KEY;
+
+  if (!apiKey) {
+    return buildFallbackText(systemPrompt, userPrompt);
+  }
+
   try {
-    const completion = await qwenClient.chat.completions.create({
+    const client = getQwenClient();
+
+    const completion = await client.chat.completions.create({
       model: qwenTextModel,
       messages: [
         { role: "system", content: systemPrompt },
@@ -115,21 +140,31 @@ export async function generateMultimodalText(
           content: [
             { type: "text", text: userPrompt },
             { type: "image_url", image_url: { url: imageUrl } },
-          ] as never,
+          ] as any,
         },
       ],
     });
 
     const content = completion.choices[0]?.message?.content;
-    return typeof content === "string" ? content : buildFallbackText(systemPrompt, userPrompt);
+
+    return typeof content === "string"
+      ? content
+      : buildFallbackText(systemPrompt, userPrompt);
   } catch {
     return generateText(systemPrompt, userPrompt);
   }
 }
 
-function buildFallbackText(systemPrompt: string, userPrompt: string): string {
+/**
+ * Fallback (safe for build-time)
+ */
+function buildFallbackText(
+  systemPrompt: string,
+  userPrompt: string,
+): string {
   const promptSummary = userPrompt.trim().slice(0, 180);
-  const role = systemPrompt.trim().split("\n")[0]?.trim() || "Agent";
+  const role =
+    systemPrompt.trim().split("\n")[0]?.trim() || "Agent";
 
   return [
     `${role} output unavailable.`,
