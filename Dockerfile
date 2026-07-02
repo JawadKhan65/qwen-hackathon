@@ -1,11 +1,11 @@
-from node:24-alpine as base
+from node:22-alpine as base
 
 
 from base as deps
 run apk add --no-cache libc6-compat
 workdir /app
 copy package.json package-lock.json* ./
-run npm ci --production --legacy-peer-deps
+run npm ci  --legacy-peer-deps
 
 from base as builder
 workdir /app
