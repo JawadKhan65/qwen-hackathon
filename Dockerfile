@@ -1,4 +1,4 @@
-from node:18-alpine as base
+from node:24-alpine as base
 
 
 from base as deps
