@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { ChevronDown, ChevronUp, Terminal } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -31,7 +31,7 @@ function stripMarkdown(text: string): string {
 type ParsedEntry = { role: string; message: string; isSystem: boolean };
 
 function parseEntry(entry: string): ParsedEntry {
-  const match = entry.match(/^>\s+\[([^\]]+)]\s*(.*)$/s);
+  const match = entry.match(/^>\s+\[([^\]]+)]\s*([\s\S]*)$/);
   const role = match?.[1] ?? "Society";
   const rawMessage = match?.[2] ?? entry;
   const message = stripMarkdown(rawMessage);
