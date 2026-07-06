@@ -9,6 +9,10 @@ import { getExecutionOrder } from "@/lib/graph-parser";
 import type { PipelineEdge, PipelineNode, PipelineResultMap } from "@/lib/types";
 
 export const runtime = "nodejs";
+// Raise Vercel's serverless function timeout to its maximum.
+// Hobby plan: 60s (hard cap — video renders will race). Pro plan: 300s.
+export const maxDuration = 300;
+
 
 type PipelineRequest = {
   nodes?: PipelineNode[];
@@ -665,14 +669,9 @@ export async function POST(request: Request) {
             .filter((nodeId) => nextReadyNodeIds.includes(nodeId));
         }
 
-        // Await all background video rendering tasks before calculating final stats and completing
-        if (backgroundTasks.length > 0) {
-          if (backgroundTasks.some((task) => !task.isSettled())) {
-            sendLog(controller, encoder, `> [System] Awaiting background video rendering tasks to resolve...`);
-          }
-          await Promise.all(backgroundTasks.map((task) => task.promise));
-        }
-
+        // ── SUMMARY ─────────────────────────────────────────────────────
+        // Emit the pipeline summary NOW — before the background video render
+        // finishes. The video result arrives as a late SSE event independently.
         if (!stoppedForError && Object.keys(results).length > 0) {
           const elapsedMs = Date.now() - startedAt;
           const baselineMs = Math.max(elapsedMs, totalNodeDurationMs);
@@ -693,6 +692,28 @@ export async function POST(request: Request) {
           );
           sendLog(controller, encoder, "> [System] Pipeline completed.");
           sendEvent(controller, encoder, { status: "complete", results, summary });
+        }
+
+        // ── BACKGROUND VIDEO RENDER ──────────────────────────────────────
+        // If a video render is still in flight, wait for it — but race it
+        // against a 55-second safety timeout so the SSE stream always closes
+        // before Vercel's infrastructure forcibly terminates the function.
+        if (backgroundTasks.length > 0 && backgroundTasks.some((t) => !t.isSettled())) {
+          sendLog(controller, encoder, `> [Video Director] Video render in progress — keeping stream alive for up to 55s.`);
+          const safetyTimeout = new Promise<void>((resolve) =>
+            setTimeout(() => resolve(), 55_000),
+          );
+          await Promise.race([
+            Promise.all(backgroundTasks.map((t) => t.promise)),
+            safetyTimeout,
+          ]);
+          if (backgroundTasks.some((t) => !t.isSettled())) {
+            sendLog(
+              controller,
+              encoder,
+              `> [Video Director] Render is still running — stream closing now. The video URL will not be available in this session.`,
+            );
+          }
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown pipeline error";
