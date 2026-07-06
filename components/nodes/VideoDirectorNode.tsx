@@ -63,6 +63,16 @@ export default function VideoDirectorNode({
                 />
               </div>
             </>
+          ) : data.status === "done" ? (
+            <div className="flex h-full w-full flex-col items-center justify-center gap-2 px-6 text-center text-xs leading-5 text-slate-500">
+              <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-400 border-t-transparent"></div>
+              <span className="font-medium">Rendering video in background...</span>
+            </div>
+          ) : data.status === "running" ? (
+            <div className="flex h-full w-full flex-col items-center justify-center gap-2 px-6 text-center text-xs leading-5 text-slate-500">
+              <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-400 border-t-transparent"></div>
+              <span className="font-medium">Deciding motion style...</span>
+            </div>
           ) : (
             <div className="flex h-full w-full items-center justify-center px-6 text-center text-xs leading-5 text-slate-400">
               Awaiting the lifestyle image before generating motion.

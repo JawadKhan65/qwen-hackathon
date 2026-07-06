@@ -1,4 +1,4 @@
-import { generateMultimodalText, generateText } from "@/lib/qwen-client";
+import { generateStreamingMultimodalText, generateStreamingText, generateText } from "@/lib/qwen-client";
 import type { PipelineEdge, PipelineNode } from "@/lib/types";
 
 type SocietyInput = {
@@ -34,15 +34,6 @@ function graphSummary(nodes: PipelineNode[], edges: PipelineEdge[]): string {
   ].join("\n");
 }
 
-/**
- * Slimmed roundtable: 2 parallel rounds instead of 4 sequential rounds.
- * Round 1: Visual + Market analysis in parallel (was separate calls before)
- * Round 2: Chair synthesises directly — skips the intermediate Art Director / Video Director
- *           critique rounds that added 2-3 minutes with minimal signal gain.
- *
- * Time saved: ~2-3 min (removes 3 sequential LLM calls).
- * Quality preserved: Chair still gets visual truth, GTM angle, and creative territory.
- */
 export async function runSocietyRoundtable({
   edges,
   onLog,
@@ -57,31 +48,33 @@ export async function runSocietyRoundtable({
     `Raw user notes:\n${notes}`,
   ].join("\n\n");
 
-  // ── ROUND 1: Three parallel specialist reviews ───────────────────────────
-  onLog?.("> [Roundtable] Parallel review started: visual truth, market angle, and creative territory.");
+  onLog?.("> [Roundtable] Three lenses on the same product simultaneously — visual truth, market reality, and creative direction. The brief only lands if all three agree.");
   const [visualAudit, marketAudit, creativeAudit] = await Promise.all([
-    generateMultimodalText(
+    generateStreamingMultimodalText(
       "You are the Visual Analyst in an agent society. Inspect the product image and determine product category, visible attributes, likely use context, risks, and whether it matches the notes. Be strict but constructive.",
       sharedContext,
       imageUrl,
+      (chunk) => onLog?.(`> [Visual Analyst] ${chunk}`),
     ),
-    generateText(
+    generateStreamingText(
       "You are the GTM Strategist in an agent society. Convert vague product notes into a selling strategy: target buyer, positioning, key benefit, objections, offer angle, and proof points. Flag missing information.",
       sharedContext,
+      (chunk) => onLog?.(`> [GTM Strategist] ${chunk}`),
     ),
-    generateText(
-      "You are the Creative Director in an agent society. Recommend: (1) the single best lifestyle image style with lighting, props, mood; (2) the best video motion style for that image; (3) copy tone and channel fit. Be specific and decisive — no options, just the winning direction.",
+    generateStreamingText(
+      "You are the Creative Director in an agent society. Recommend: (1) the single best lifestyle image style with lighting, props, mood; (2) the best video motion style for that image; (3) copy tone and channel fit. Be specific and decisive - no options, just the winning direction.",
       sharedContext,
+      (chunk) => onLog?.(`> [Creative Director] ${chunk}`),
     ),
   ]);
-  onLog?.("> [Visual Analyst] Product/category signals extracted from the uploaded asset.");
-  onLog?.("> [GTM Strategist] Buyer, positioning, objections, and offer levers drafted.");
-  onLog?.("> [Creative Director] Image style, video style, and copy tone decided.");
 
-  // ── ROUND 2: Chair synthesises directly into the consensus brief ─────────
-  onLog?.("> [Roundtable] Chair is reconciling style, motion, and selling clarity into one consensus.");
+  onLog?.("> [Visual Analyst] Cross-referenced the image against the notes — there's a signal worth building on, and one assumption I had to make explicit.");
+  onLog?.("> [GTM Strategist] Positioning angle resolved. I know who this is for and which objection to kill in the first two seconds.");
+  onLog?.("> [Creative Director] One direction decided — not options. The image style, the motion style, and the copy tone all point the same way now.");
+
+  onLog?.("> [Chair] Three strong perspectives on the table. I need to find the through-line — one brief that every specialist can execute without ambiguity.");
   const brief = await generateText(
-    "You are the Chair of an ecommerce agent society. Produce the final consensus GTM brief. Return markdown with: ### Consensus Strategy, ### Image Style Decision, ### Video Style Decision, ### Copy Strategy, ### SEO Strategy, ### Audience & Positioning, ### Open Risks. Choose one direction for each — no alternatives. If notes and image conflict, state your assumption.",
+    "You are the Chair of an ecommerce agent society. Produce the final consensus GTM brief. Return markdown with: ### Consensus Strategy, ### Image Style Decision, ### Video Style Decision, ### Copy Strategy, ### SEO Strategy, ### Audience & Positioning, ### Open Risks. Choose one direction for each - no alternatives. If notes and image conflict, state your assumption.",
     [
       "Roundtable inputs:",
       "## Visual Analyst",
@@ -92,7 +85,7 @@ export async function runSocietyRoundtable({
       creativeAudit,
     ].join("\n\n"),
   );
-  onLog?.("> [Chair] Consensus selected: one image style, one video style, and one selling angle.");
+  onLog?.("> [Chair] Brief finalized. One positioning, one image direction, one motion style. No alternatives — downstream agents need certainty, not a menu.");
 
   return {
     brief,

@@ -1,4 +1,7 @@
-import type { ReactNode } from "react";
+"use client"
+import { useState, type ReactNode } from "react"
+import { CopyIcon, CheckIcon } from "lucide-react"
+
 
 function renderInline(text: string): ReactNode[] {
   const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g);
@@ -27,10 +30,18 @@ function renderInline(text: string): ReactNode[] {
   });
 }
 
+
 export default function MarkdownOutput({ value }: { value: string }) {
   const lines = value.trim().split(/\r?\n/);
   const blocks: ReactNode[] = [];
   let listItems: string[] = [];
+  const [copied, setCopied] = useState(false)
+
+   const handleCopy = async () => {
+    await navigator.clipboard.writeText(value)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
 
   const flushList = () => {
     if (listItems.length === 0) return;
@@ -84,5 +95,17 @@ export default function MarkdownOutput({ value }: { value: string }) {
 
   flushList();
 
-  return <div className="text-xs leading-6 text-slate-700">{blocks}</div>;
+  return <div className="relative text-xs leading-6 text-slate-700">
+    <button
+      onClick={handleCopy}
+      className="absolute right-0 top-0 flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-500 hover:bg-slate-50 hover: cursor-pointer"
+    >
+      {copied ? (
+        <><CheckIcon size={12} className="text-green-500" /> Copied</>
+      ) : (
+        <><CopyIcon size={12} /> Copy</>
+      )}
+    </button>
+    <div className="pr-14">{blocks}</div>
+  </div>;
 }

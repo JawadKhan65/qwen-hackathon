@@ -83,7 +83,8 @@ export async function pollTask(
       throw new Error(response.message ?? `DashScope task ${status.toLowerCase()}.`);
     }
 
-    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    const interval = attempt < 8 ? 1500 : POLL_INTERVAL_MS;
+    await new Promise((resolve) => setTimeout(resolve, interval));
   }
 
   throw new Error("DashScope task polling timed out.");

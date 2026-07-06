@@ -3,7 +3,7 @@ import { runCopywriter } from "@/lib/agents/copywriter";
 import { runScriptwriter } from "@/lib/agents/scriptwriter";
 import { runSeoStrategist } from "@/lib/agents/seo-strategist";
 import { runSocietyRoundtable } from "@/lib/agents/society";
-import { runVideoDirector } from "@/lib/agents/video-director";
+import { decideMotionStyle, startVideoRender, resolveVideoRender } from "@/lib/agents/video-director";
 import { getDefaultPrompt, type AgentNodeType } from "@/lib/agent-prompts";
 import { getExecutionOrder } from "@/lib/graph-parser";
 import type { PipelineEdge, PipelineNode, PipelineResultMap } from "@/lib/types";
@@ -88,36 +88,36 @@ function buildHandoffMessage(
 ): string {
   const from = fromNode.type ?? "agent";
   const to = toNode.type ?? "agent";
-  const fromLabel = from.replace(/([A-Z])/g, " $1").trim();
-  const toLabel = to.replace(/([A-Z])/g, " $1").trim();
+  const fromLabel = formatNodeTypeLabel(from);
+  const toLabel = formatNodeTypeLabel(to);
 
   // Typed handoff messages based on known agent pairings
   if (from === "productImage" && to === "artDirector")
-    return `> [Product Image → Art Director] Product image ready. Use it as the visual anchor — build a lifestyle scene around it, do not replace or obscure the product.`;
+    return `> [Product Image → Art Director] Product image is in. I'm not decorating around it — I'm building the world where it already belongs.`;
 
   if (from === "productImage" && to === "seoStrategist")
-    return `> [Product Image → SEO Strategist] Visual product data available. Extract category, attributes, and use-case signals for your keyword strategy.`;
+    return `> [Product Image → SEO Strategist] Visual data is live. Category, attributes, and use-context signals are all readable — now I need to find the searches that actual buyer runs, not the obvious ones.`;
 
   if (from === "rawNotes" && to === "artDirector")
-    return `> [Raw Notes → Art Director] Launch brief received. Honour the positioning, audience, and constraints when choosing the lifestyle setting.`;
+    return `> [Raw Notes → Art Director] Launch brief received. The positioning tells me exactly who I'm making this for — the image has to speak that language before a single word of copy exists.`;
 
   if (from === "rawNotes" && to === "seoStrategist")
-    return `> [Raw Notes → SEO Strategist] Brand context and positioning received. Align keyword intent with the stated audience and offer angle.`;
+    return `> [Raw Notes → SEO Strategist] Brand context landed. The positioning angle is clear — I need to map that to real search intent now, not just the product category keywords.`;
 
   if (from === "artDirector" && to === "videoDirector") {
     const hasImage = result && typeof result === "object" && "imageUrl" in (result as object);
-    return `> [Art Director → Video Director] ${hasImage ? "Lifestyle image generated." : "Creative direction locked."} Animate this scene — preserve the product hero, apply the consensus motion style, keep it under 5 seconds.`;
+    return `> [Art Director → Video Director] ${hasImage ? "Image generated — the scene is set." : "Creative direction locked."} Motion should feel inevitable here, not decorative. The product stays the hero.`;
   }
 
   if (from === "artDirector" && to === "copywriter")
-    return `> [Art Director → Copywriter] Visual territory locked. Match your copy tone to the image mood — if it's premium and minimal, keep the language sharp and restrained.`;
+    return `> [Art Director → Copywriter] Visual territory is locked. The image has a tone — match your words to it precisely. If it's restrained and premium, the copy cannot shout.`;
 
   if (from === "videoDirector" && to === "scriptwriter") {
-    return `> [Video Director → Scriptwriter] Silent video generated. Fast-cut pacing, high energy. Write a punchy staccato voiceover — 10-15 words max, each line hits on a cut. DO NOT describe the visuals, write what the creator SAYS.`;
+    return `> [Video Director → Scriptwriter] Motion style is decided — pacing and energy level are in the rationale. Read it before writing a word. Write what the creator says out loud, not what they see on screen.`;
   }
 
   if (from === "copywriter" && to === "scriptwriter")
-    return `> [Copywriter → Scriptwriter] Ad copy locked. Use the hook and CTA angle but compress into spoken word — shorter, more urgent, built for audio not text.`;
+    return `> [Copywriter → Scriptwriter] Ad copy landed. The hook and CTA are the frame — now compress it into spoken word. Strip everything that doesn't survive being said at TikTok speed.`;
 
   // Generic fallback — still free, still instant
   const resultType =
@@ -129,51 +129,76 @@ function buildHandoffMessage(
           ? "text output"
           : "structured output";
 
-  return `> [${fromLabel} → ${toLabel}] ${fromLabel} completed with ${resultType}. Passing context downstream for your role.`;
+  return `> [${fromLabel} → ${toLabel}] ${fromLabel} output ready (${resultType}). Passing context — read what came before you before you start.`;
 }
 
-// ─── STATIC LIVE THOUGHTS (shown while the LLM generates its response) ───────
+// Live log helpers.
+
+function formatNodeTypeLabel(type: string): string {
+  const spaced = type.replace(/([A-Z])/g, " $1").trim();
+  const capitalized = spaced.charAt(0).toUpperCase() + spaced.slice(1);
+  return capitalized.replace(/\bSeo\b/g, "SEO");
+}
+
+function isStreamingTextNode(node: PipelineNode): boolean {
+  return (
+    node.type === "copywriter" ||
+    node.type === "seoStrategist" ||
+    node.type === "scriptwriter"
+  );
+}
+
+function createSentenceLogEmitter(
+  label: string,
+  emit: (message: string) => void,
+): { push: (chunk: string) => void; flush: () => void } {
+  let buffer = "";
+
+  const emitBuffered = (text: string) => {
+    const trimmed = text.replace(/\s+/g, " ").trim();
+    if (trimmed) {
+      emit(`> [${label}] ${trimmed}`);
+    }
+  };
+
+  return {
+    push(chunk: string) {
+      buffer = [buffer, chunk].filter(Boolean).join(" ");
+
+      while (buffer.length > 0) {
+        const match = buffer.match(/[.!?](?:\s|$)|\n/);
+        if (!match || match.index === undefined) {
+          break;
+        }
+
+        const end = match.index + match[0].length;
+        emitBuffered(buffer.slice(0, end));
+        buffer = buffer.slice(end);
+      }
+    },
+    flush() {
+      emitBuffered(buffer);
+      buffer = "";
+    },
+  };
+}
 
 function nodeThoughts(node: PipelineNode): string[] {
-  const type = node.type ?? "agent";
-
   const thoughts: Record<string, string[]> = {
     artDirector: [
-      `> [Art Director] Scanning image for hero product visibility and composition anchors.`,
-      `> [Art Director] Testing lifestyle territory against product truth — rejecting generic backgrounds.`,
-      `> [Art Director] Locking final image style from society consensus brief.`,
+      `> [Art Director] Reading the brief — I need a lifestyle scene where this product is the undeniable hero, not a prop in someone else's story.`,
+      `> [Art Director] Sending the scene specification to DashScope. Lighting, staging, and spatial hierarchy have to earn their place in the final video.`,
     ],
     videoDirector: [
-      `> [Video Director] Analysing lifestyle image for motion anchors and camera path potential.`,
-      `> [Video Director] Deciding pacing: fast-cut vs. slow cinematic based on product energy.`,
-      `> [Video Director] Encoding motion style metadata for Scriptwriter handoff.`,
-    ],
-    copywriter: [
-      `> [Copywriter] Translating society GTM angle into a buyer-facing hook.`,
-      `> [Copywriter] A/B testing direct-response vs. brand-polish tone.`,
-      `> [Copywriter] Cutting generic language, tightening CTA to 5 words or fewer.`,
-    ],
-    seoStrategist: [
-      `> [SEO Strategist] Extracting product category signals and searchable attributes.`,
-      `> [SEO Strategist] Mapping keyword intent to product page readability.`,
-      `> [SEO Strategist] Aligning meta copy with the consensus positioning strategy.`,
-    ],
-    scriptwriter: [
-      `> [Scriptwriter] Reading Video Director's motion style handoff — pacing: fast-cut.`,
-      `> [Scriptwriter] Adapting voiceover rhythm to match video energy — short punchy lines.`,
-      `> [Scriptwriter] Writing word-for-word script the creator can record as audio overlay.`,
+      `> [Video Director] Pulling the energy signature of this product from the brief — is this a fast-cut or a slow reveal? The pacing has to match what we're actually selling.`,
+      `> [Video Director] Motion style locked. The Scriptwriter needs the exact rhythm before writing a single word — I'm packaging that handoff now.`,
     ],
   };
 
-  const label = type.charAt(0).toUpperCase() + type.slice(1);
-  return thoughts[type] ?? [
-    `> [${label}] Reading context from upstream agents.`,
-    `> [${label}] Preparing structured handoff for downstream nodes.`,
-  ];
+  return thoughts[node.type ?? ""] ?? [];
 }
 
-// ─── THOUGHT TICKER (interleaves thoughts while LLM runs) ────────────────────
-
+// Thought ticker for non-streaming media/director calls.
 async function withLiveThoughts<T>(
   emit: (message: string) => void,
   thoughts: string[],
@@ -332,7 +357,7 @@ async function runNode(
         productImageUrl: firstMediaUrl(results, inboundSources),
       });
     case "videoDirector":
-      return runVideoDirector(firstMediaUrl(results, inboundSources), combinedContext);
+      return decideMotionStyle(combinedContext);
     case "copywriter":
       return runCopywriter(combinedContext || JSON.stringify(node.data ?? {}), onChunk);
     case "seoStrategist":
@@ -363,6 +388,7 @@ export async function POST(request: Request) {
       let executedAgents = 0;
       let conflictResolutions = 0;
       let totalNodeDurationMs = 0;
+      const backgroundTasks: Array<{ promise: Promise<void>; isSettled: () => boolean }> = [];
 
       try {
         // ── GUARDRAIL CHECK ──────────────────────────────────────────────
@@ -390,33 +416,21 @@ export async function POST(request: Request) {
         const completedNodeIds = new Set<string>();
         let stoppedForError = false;
 
-        sendLog(controller, encoder, "> [System] Execution order resolved from graph topology.");
+        sendLog(controller, encoder, "> [System] Graph topology resolved — execution order is deterministic from the dependency graph.");
         sendLog(
           controller,
           encoder,
-          `> [System] Agent society assembled ${orderedNodes.length} roles from ${edges.length} wires.`,
+          `> [System] ${orderedNodes.length} agent roles identified across ${edges.length} data connections. Assembling the society now.`,
         );
-        sendLog(controller, encoder, "> [Society] Opening roundtable: agents are inspecting assets, notes, and workflow topology.");
+        sendLog(controller, encoder, "> [Society] Roundtable is assembling — seven specialists, one brief to agree on. This is where ambiguity dies.");
 
         // ── SOCIETY ROUNDTABLE ───────────────────────────────────────────
         const societyStartedAt = Date.now();
-        const societyPlan = await withLiveThoughts(
-          (message) => sendLog(controller, encoder, message),
-          [
-            "> [Roundtable] Visual Analyst is checking whether image and brief tell the same story.",
-            "> [Roundtable] GTM Strategist is turning vague notes into buyer, offer, and positioning hypotheses.",
-            "> [Roundtable] Creative Director is comparing possible lifestyle worlds and channel fit.",
-            "> [Roundtable] Art Director is proposing image territories for the Video Director to challenge.",
-            "> [Roundtable] Video Director is pressure-testing which image style will animate best.",
-            "> [Roundtable] Growth Strategist is voting on the clearest conversion angle.",
-            "> [Roundtable] Chair is reconciling style, motion, and selling clarity into one consensus.",
-          ],
-          runSocietyRoundtable({
-            edges,
-            nodes,
-            onLog: (message) => sendLog(controller, encoder, message),
-          }),
-        );
+        const societyPlan = await runSocietyRoundtable({
+          edges,
+          nodes,
+          onLog: (message) => sendLog(controller, encoder, message),
+        });
         totalNodeDurationMs += Date.now() - societyStartedAt;
         executedAgents += 7;
         conflictResolutions +=
@@ -427,14 +441,14 @@ export async function POST(request: Request) {
           critique: societyPlan.critique,
         };
 
-        sendLog(controller, encoder, "> [Society] Consensus brief locked. The graph will now execute with shared GTM strategy.");
+        sendLog(controller, encoder, "> [Society] Consensus reached. Every downstream agent now runs from the same page — no contradictions, no creative drift.");
 
         // ── NODE EXECUTION WAVES ─────────────────────────────────────────
         while (readyNodeIds.length > 0 && !stoppedForError) {
           sendLog(
             controller,
             encoder,
-            `> [System] Running parallel wave: ${readyNodeIds.join(", ")}.`,
+            `> [System] Dispatching agents in parallel — ${readyNodeIds.join(", ")} are now running concurrently.`,
           );
 
           const waveResults = await Promise.all(
@@ -452,7 +466,7 @@ export async function POST(request: Request) {
               sendLog(
                 controller,
                 encoder,
-                `> [System] Decomposed ${nodeType} as a role with ${inboundSources.length} inbound ${inboundSources.length === 1 ? "dependency" : "dependencies"}.`,
+                `> [${formatNodeTypeLabel(nodeType)}] Activated. I have ${inboundSources.length} upstream source${inboundSources.length === 1 ? "" : "s"} to read before I can start.`,
               );
 
               if (inboundSources.length > 1) {
@@ -460,7 +474,7 @@ export async function POST(request: Request) {
                 sendLog(
                   controller,
                   encoder,
-                  `> [System] Conflict resolution: merging inputs from ${inboundSources.join(", ")} before handing off to ${node.id}.`,
+                  `> [${formatNodeTypeLabel(nodeType)}] Multiple inputs — I need to reconcile ${inboundSources.join(", ")} into a coherent picture before I proceed.`,
                 );
               }
 
@@ -468,27 +482,36 @@ export async function POST(request: Request) {
               sendLog(
                 controller,
                 encoder,
-                `> [${node.id}] Thinking with society brief: ${promptPreview}${prompt.length > 90 ? "..." : ""}`,
+                `> [${formatNodeTypeLabel(nodeType)}] Reading the consensus brief and my role context — building a clear picture before generating output.`,
               );
+              // Streaming callback: preserves node-card SSE chunks and mirrors text-agent sentences into the society log.
+              const logStream = isStreamingTextNode(node)
+                ? createSentenceLogEmitter(formatNodeTypeLabel(nodeType), (message) =>
+                    sendLog(controller, encoder, message),
+                  )
+                : null;
 
-              // Streaming callback: emits tokens as dedicated SSE events → node card
-              // accumulates them ChatGPT-style. Nothing goes to the society log.
-              // ⚠️ Zero extra API calls — this IS the agent's generation, streamed live.
               const onChunk = (chunk: string) => {
                 sendEvent(controller, encoder, {
                   nodeId: node.id,
                   status: "streaming",
                   chunk,
                 });
+                logStream?.push(chunk);
               };
 
               try {
                 const nodeStartedAt = Date.now();
-                const result = await withLiveThoughts(
-                  (message) => sendLog(controller, encoder, message),
-                  nodeThoughts(node),
-                  runNode(node, results, inboundSources, societyPlan.brief, onChunk),
-                );
+                const nodeTask = runNode(node, results, inboundSources, societyPlan.brief, onChunk);
+                const thoughts = nodeThoughts(node);
+                const result = isStreamingTextNode(node) || thoughts.length === 0
+                  ? await nodeTask
+                  : await withLiveThoughts(
+                      (message) => sendLog(controller, encoder, message),
+                      thoughts,
+                      nodeTask,
+                    );
+                logStream?.flush();
                 return {
                   nodeId,
                   ok: true as const,
@@ -497,6 +520,7 @@ export async function POST(request: Request) {
                   durationMs: Date.now() - nodeStartedAt,
                 };
               } catch (error) {
+                logStream?.flush();
                 const message = error instanceof Error ? error.message : "Unknown node error";
                 return { nodeId, ok: false as const, error: message };
               }
@@ -508,7 +532,7 @@ export async function POST(request: Request) {
           for (const waveResult of waveResults) {
             if (!waveResult.ok) {
               stoppedForError = true;
-              sendLog(controller, encoder, `> [${waveResult.nodeId}] Error: ${waveResult.error}`);
+              sendLog(controller, encoder, `> [${formatNodeTypeLabel(waveResult.nodeId)}] Something went wrong I can't recover from: ${waveResult.error}`);
               sendEvent(controller, encoder, {
                 nodeId: waveResult.nodeId,
                 status: "error",
@@ -527,7 +551,7 @@ export async function POST(request: Request) {
             sendLog(
               controller,
               encoder,
-              `> [${waveResult.nodeId}] Completed with ${typeof waveResult.result === "string" ? "text/media" : "structured output"}; handed off to ${downstreamIds.length} downstream node${downstreamIds.length === 1 ? "" : "s"}.`,
+              `> [${formatNodeTypeLabel(waveResult.nodeId)}] Done. Output passed to ${downstreamIds.length} downstream agent${downstreamIds.length === 1 ? "" : "s"}.`,
             );
             sendEvent(controller, encoder, {
               nodeId: waveResult.nodeId,
@@ -535,6 +559,74 @@ export async function POST(request: Request) {
               result: waveResult.result,
               data: waveResult.result,
             });
+
+            if (waveResult.node && waveResult.node.type === "videoDirector") {
+              const videoNode = waveResult.node;
+              const inboundSources = inboundNodeIds(videoNode.id, edges);
+              const imageUrl = firstMediaUrl(results, inboundSources);
+              if (imageUrl) {
+                const prompt = promptFromNode(videoNode);
+                const relevantBrief = extractBriefSections(societyPlan.brief, ["Video Style", "Image Style"]);
+                const context = contextFromResults(results, inboundSources);
+                const combinedContext = [
+                  "Shared society-calibrated launch brief guidelines:",
+                  relevantBrief,
+                  "Role instruction:",
+                  prompt,
+                  "Inbound node context:",
+                  context,
+                ]
+                  .filter(Boolean)
+                  .join("\n\n");
+
+                const renderPromise = (async () => {
+                  const renderStartedAt = Date.now();
+                  try {
+                    sendLog(controller, encoder, `> [Video Director] Sending video synthesis request to DashScope — this runs in the background while downstream agents keep working.`);
+                    const taskId = await startVideoRender(imageUrl, combinedContext);
+                    sendLog(controller, encoder, `> [Video Director] Task accepted (ID: ${taskId}). Polling for completion — the Scriptwriter doesn't need to wait for this.`);
+                    const videoUrl = await resolveVideoRender(taskId);
+                    const renderDurationMs = Date.now() - renderStartedAt;
+                    sendLog(controller, encoder, `> [Video Director] Video is ready — ${renderDurationMs}ms from dispatch to final frame. Pushing URL to the timeline.`);
+                    
+                    totalNodeDurationMs += renderDurationMs;
+
+                    const finalResult = {
+                      ...(results[videoNode.id] as Record<string, unknown>),
+                      videoUrl,
+                    };
+                    results[videoNode.id] = finalResult;
+
+                    sendEvent(controller, encoder, {
+                      nodeId: videoNode.id,
+                      status: "done",
+                      result: finalResult,
+                      data: finalResult,
+                    });
+                  } catch (err) {
+                    const renderDurationMs = Date.now() - renderStartedAt;
+                    totalNodeDurationMs += renderDurationMs;
+                    const errMsg = err instanceof Error ? err.message : "Background render failed";
+                    sendLog(controller, encoder, `> [Video Director] Background render didn't complete after ${renderDurationMs}ms: ${errMsg}. The rest of the pipeline already finished.`);
+                    sendEvent(controller, encoder, {
+                      nodeId: videoNode.id,
+                      status: "error",
+                      error: errMsg,
+                    });
+                  }
+                })();
+                let settled = false;
+                const trackedPromise = renderPromise.finally(() => {
+                  settled = true;
+                });
+                backgroundTasks.push({
+                  promise: trackedPromise,
+                  isSettled: () => settled,
+                });
+              } else {
+                sendLog(controller, encoder, `> [Video Director] No lifestyle image found in upstream results — skipping video synthesis. Art Director output is needed first.`);
+              }
+            }
 
             // ── ZERO-COST HANDOFF MESSAGES ──────────────────────────────
             // Derived instantly from result data. No API call. No cost.
@@ -571,6 +663,14 @@ export async function POST(request: Request) {
           readyNodeIds = orderedNodes
             .map((node) => node.id)
             .filter((nodeId) => nextReadyNodeIds.includes(nodeId));
+        }
+
+        // Await all background video rendering tasks before calculating final stats and completing
+        if (backgroundTasks.length > 0) {
+          if (backgroundTasks.some((task) => !task.isSettled())) {
+            sendLog(controller, encoder, `> [System] Awaiting background video rendering tasks to resolve...`);
+          }
+          await Promise.all(backgroundTasks.map((task) => task.promise));
         }
 
         if (!stoppedForError && Object.keys(results).length > 0) {
